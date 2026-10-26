@@ -18,9 +18,12 @@ function Home() {
   const handleLogin = async (token) => {
     try {
       const { data } = await api.post("/api/auth/login", { token });
-      
-      dispatch(setUserData(data.user))
-      
+
+      if (data.sessionId) {
+        localStorage.setItem("cortex_session_token", data.sessionId);
+      }
+
+      dispatch(setUserData(data.user));
     } catch (error) {
       console.error(
         "Backend login failed:",

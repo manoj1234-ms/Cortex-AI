@@ -69,6 +69,7 @@ export const login = async (req, res) => {
       success: true,
       message: "Login successful",
       user: sessionUser,
+      sessionId,
     });
   } catch (error) {
     console.error("Login error:", error);
@@ -85,7 +86,9 @@ export const login = async (req, res) => {
 
 export const logout = async (req, res) => {
   try {
-    const sessionId = req.cookies?.session;
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader && authHeader.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+    const sessionId = req.cookies?.session || bearerToken;
 
     if (sessionId) {
       await redis.del(`session:${sessionId}`);
