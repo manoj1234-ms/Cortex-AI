@@ -61,7 +61,7 @@ The gateway requires:
 - `BILLING_SERVICE`
 - `REDIS_URL`
 
-The auth, chat, and billing services require `PORT` and `MONGO_URI`. Auth and chat also require `REDIS_URL`. Billing additionally needs its Razorpay configuration and the auth service URL.
+The auth, chat, and billing services require `PORT` and `MONGO_URI`. Auth and chat also require `REDIS_URL`. The auth service needs Firebase Admin credentials: set `FIREBASE_SERVICE_ACCOUNT_KEY` to the complete service-account JSON value, or place an untracked `serviceAccountKey.json` in `backend/services/auth/` for local development. Billing additionally needs its Razorpay configuration and the auth service URL.
 
 The agent service requires `PORT`, `MONGO_URI`, `REDIS_URL`, and the provider configuration for the features you use. Depending on enabled features, this may include model/search API keys, service URLs, Qdrant settings, and AWS S3 configuration.
 
@@ -158,6 +158,8 @@ Except for login, application API routes require an authenticated session.
 - For a CloudFront API behavior, forward cookies to the gateway and disable caching for authenticated API responses.
 - Deploy Redis as a shared, network-reachable service for the auth service and gateway; `localhost` is not shared across separate containers or hosts.
 - Configure backend service URLs and secrets in the deployment environment, not in the frontend bundle.
+- Store the complete Firebase Admin service-account JSON in AWS Secrets Manager and inject it into the auth container as `FIREBASE_SERVICE_ACCOUNT_KEY` using the task definition's `secrets` field. Grant the task execution role `secretsmanager:GetSecretValue` for that secret (and `kms:Decrypt` if it uses a customer-managed KMS key).
+- After adding or changing task-definition secrets, register a new task-definition revision and update the ECS auth service to use it. A forced deployment alone does not apply task-definition changes.
 
 ## Conclusion
 
