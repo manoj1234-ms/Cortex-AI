@@ -154,11 +154,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: build frontend
-        run: |  
-         cd frontend 
-         npm instal 
-         npm run build
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_SERVER_URL: ${{ secrets.VITE_SERVER_URL }}
+          VITE_RAZORPAY_KEY_ID: ${{ secrets.VITE_RAZORPAY_KEY_ID }}
+        run: |
+          test -n "$VITE_FIREBASE_API_KEY" || { echo "VITE_FIREBASE_API_KEY is not configured"; exit 1; }
+          test -n "$VITE_SERVER_URL" || { echo "VITE_SERVER_URL is not configured"; exit 1; }
+          test -n "$VITE_RAZORPAY_KEY_ID" || { echo "VITE_RAZORPAY_KEY_ID is not configured"; exit 1; }
+          npm ci
+          npm run build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
