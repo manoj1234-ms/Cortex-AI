@@ -175,40 +175,19 @@ jobs:
             --service ${{ secrets.BILLING_SERVICE }} \
             --force-new-deployment
 
-      # ── Wait for ALL services to stabilize ──────────────────────────────────
-      # ECS waits until the desired count of healthy tasks equals the running
-      # count. If this times out, ECS itself rolls back via the circuit-breaker
-      # (must be enabled in the ECS service settings → "deployment circuit breaker").
-
-      - name: Wait for stability — gateway
+      # ── Wait for ALL services to stabilize in parallel ──────────────────────
+      # Passing all services to a single command checks them concurrently,
+      # reducing wait time from ~10 minutes down to just 2-3 minutes total.
+      - name: Wait for all services to stabilize (parallel)
         run: |
           aws ecs wait services-stable \
             --cluster ${{ secrets.ECS_CLUSTER }} \
-            --services ${{ secrets.GATEWAY_SERVICE }}
-
-      - name: Wait for stability — auth
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ secrets.ECS_CLUSTER }} \
-            --services ${{ secrets.AUTH_SERVICE }}
-
-      - name: Wait for stability — chat
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ secrets.ECS_CLUSTER }} \
-            --services ${{ secrets.CHAT_SERVICE }}
-
-      - name: Wait for stability — agent
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ secrets.ECS_CLUSTER }} \
-            --services ${{ secrets.AGENT_SERVICE }}
-
-      - name: Wait for stability — billing
-        run: |
-          aws ecs wait services-stable \
-            --cluster ${{ secrets.ECS_CLUSTER }} \
-            --services ${{ secrets.BILLING_SERVICE }}
+            --services \
+              ${{ secrets.GATEWAY_SERVICE }} \
+              ${{ secrets.AUTH_SERVICE }} \
+              ${{ secrets.CHAT_SERVICE }} \
+              ${{ secrets.AGENT_SERVICE }} \
+              ${{ secrets.BILLING_SERVICE }}
 
       # ── Manual rollback step (runs only if a wait step failed) ──────────────
       # Re-deploys the PREVIOUS_SHA image tag for every service.

@@ -102,19 +102,14 @@ export const verifyPayment = async (req, res) => {
             return res.status(400).json({ message: "Payment already processed." })
         }
 
-        payment.status = "paid"
-        payment.paymentId = paymentId
-
-        await payment.save()
-
         if (!process.env.AUTH_SERVICE) {
             throw new Error("AUTH_SERVICE is not configured.")
         }
 
         await axios.post(`${process.env.AUTH_SERVICE}/update-plan`, {
-            userId: payment.userId,
-            plan: payment.plan,
-            credits: payment.credits,
+            userId: updated.userId,
+            plan: updated.plan,
+            credits: updated.credits,
         }, {
             timeout: 10_000,
             headers: { "x-internal-secret": process.env.INTERNAL_SECRET_KEY },
@@ -123,9 +118,10 @@ export const verifyPayment = async (req, res) => {
         return res.status(200).json({ message: "Payment verified successfully." })
 
     } catch (error) {
-        console.error("Verify billing payment error:", error)
+        console.error("Verify billing payment error:", error.response?.data || error)
+        const errorDetail = error.response?.data?.message || error.message || "Unable to verify payment."
         return res.status(500).json({
-            message: "Unable to verify payment. Check the billing service logs.",
+            message: errorDetail,
         })
     }
 }
