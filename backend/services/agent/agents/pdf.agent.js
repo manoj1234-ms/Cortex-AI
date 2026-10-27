@@ -186,11 +186,6 @@ ${documentData.content}`,
     };
   } catch (error) {
     console.error("[pdfAgent] Error:", error);
-
-      return {
-        ...state,
-        aiResponse: error?.data?.message || "failed to generate pdf"  
-    }
-
+    throw error
   }
 };

@@ -1,192 +1,302 @@
-name: ConvexAI deployment
+name: ConvexAI CI / CD
 
+# ─── Trigger ──────────────────────────────────────────────────────────────────
 on:
   push:
-    branches:
-      - main
+    branches: [main]
 
+# ─── Shared env ───────────────────────────────────────────────────────────────
 env:
-  AWS_REGION: ${{ secrets.AWS_REGION }}
-  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  AWS_REGION:      ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID:  ${{ secrets.AWS_ACCOUNT_ID }}
+  # Short SHA used as the image version tag so every push is traceable and
+  # we can roll back to any previous tag by re-deploying it.
+  IMAGE_TAG:       ${{ github.sha }}
 
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 1 — run all service tests before touching anything in production
+# ══════════════════════════════════════════════════════════════════════════════
 jobs:
-  deploy-backend:
+  test:
+    name: Run tests (all services)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test — auth service
+        working-directory: backend/services/auth
+        run: |
+          npm ci
+          npm test
+
+      - name: Test — billing service
+        working-directory: backend/services/billing
+        run: |
+          npm ci
+          npm test
+
+      - name: Test — agent service
+        working-directory: backend/services/agent
+        run: |
+          npm ci
+          npm test
+
+      - name: Test — chat service
+        working-directory: backend/services/chat
+        run: |
+          npm ci
+          npm test
+
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 2 — build, tag (sha + latest), push all Docker images to ECR
+# ══════════════════════════════════════════════════════════════════════════════
+  build-and-push:
+    name: Build & push images
+    needs: test          # ← only runs if ALL tests passed
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ secrets.AWS_REGION }}
 
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build gateway
-        run: |
-          docker build \
-            -f backend/gateway/DockerFile \
-            -t gateway backend
+      # ── helper: build → tag with SHA AND latest → push both tags ────────────
+      # We push two tags per image:
+      #   :abc1234  (immutable, used for rollback)
+      #   :latest   (always points to the newest successful deploy)
 
-      - name: Tag gateway
-        id: tag-gateway
+      - name: Build & push — gateway
         run: |
-          docker tag gateway:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/gateway:latest
+          REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/gateway
+          docker build -f backend/gateway/DockerFile -t $REPO:$IMAGE_TAG -t $REPO:latest backend
+          docker push $REPO:$IMAGE_TAG
+          docker push $REPO:latest
 
-      - name: Push gateway
+      - name: Build & push — auth-service
         run: |
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/gateway:latest
+          REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service
+          docker build -f backend/services/auth/DockerFile -t $REPO:$IMAGE_TAG -t $REPO:latest backend
+          docker push $REPO:$IMAGE_TAG
+          docker push $REPO:latest
 
-      - name: Build Auth
+      - name: Build & push — agent-service
         run: |
-          docker build \
-            -f backend/services/auth/DockerFile \
-            -t auth-service backend
+          REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agent-service
+          docker build -f backend/services/agent/DockerFile -t $REPO:$IMAGE_TAG -t $REPO:latest backend
+          docker push $REPO:$IMAGE_TAG
+          docker push $REPO:latest
 
-      - name: Tag auth
-        id: tag-auth
+      - name: Build & push — chat-service
         run: |
-          docker tag auth-service:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service:latest
+          REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/chat-service
+          docker build -f backend/services/chat/DockerFile -t $REPO:$IMAGE_TAG -t $REPO:latest backend
+          docker push $REPO:$IMAGE_TAG
+          docker push $REPO:latest
 
-      - name: Push auth-service
+      - name: Build & push — billing-service
         run: |
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/auth-service:latest
+          REPO=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/billing-service
+          docker build -f backend/services/billing/DockerFile -t $REPO:$IMAGE_TAG -t $REPO:latest backend
+          docker push $REPO:$IMAGE_TAG
+          docker push $REPO:latest
 
-      - name: Build agent-service
-        run: |
-          docker build \
-            -f backend/services/agent/DockerFile \
-            -t agent-service backend
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 3 — deploy backend services to ECS and wait for stability
+#          If any service fails to stabilize → roll back ALL services
+# ══════════════════════════════════════════════════════════════════════════════
+  deploy-backend:
+    name: Deploy backend (ECS)
+    needs: build-and-push
+    runs-on: ubuntu-latest
 
-      - name: Tag agent-service
-        id: tag-agent
-        run: |
-          docker tag agent-service:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agent-service:latest
+    steps:
+      - uses: actions/checkout@v4
 
-      - name: Push agent-service
-        run: |
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/agent-service:latest
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Build chat-service
-        run: |
-          docker build \
-            -f backend/services/chat/DockerFile \
-            -t chat-service backend
+      # ── Deploy each service ──────────────────────────────────────────────────
+      # force-new-deployment tells ECS to pull the new :latest image and
+      # perform a rolling update (old tasks stay alive until new ones are healthy).
 
-      - name: Tag chat-service
-        id: tag-chat
-        run: |
-          docker tag chat-service:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/chat-service:latest
-
-      - name: Push chat-service
-        run: |
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/chat-service:latest
-
-      - name: Build billing-service
-        run: |
-          docker build \
-            -f backend/services/billing/DockerFile \
-            -t billing-service backend
-
-      - name: Tag billing-service
-        id: tag-billing
-        run: |
-          docker tag billing-service:latest \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/billing-service:latest
-
-      - name: Push billing-service
-        run: |
-          docker push \
-            $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/billing-service:latest
-
-      - name: Deploy gateway
+      - name: Deploy — gateway
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.GATEWAY_SERVICE }} \
             --force-new-deployment
 
-      - name: Deploy auth
+      - name: Deploy — auth
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.AUTH_SERVICE }} \
             --force-new-deployment
 
-      - name: Deploy chat
+      - name: Deploy — chat
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.CHAT_SERVICE }} \
             --force-new-deployment
 
-      - name: Deploy agent
+      - name: Deploy — agent
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.AGENT_SERVICE }} \
             --force-new-deployment
 
-      - name: Deploy billing
+      - name: Deploy — billing
         run: |
           aws ecs update-service \
             --cluster ${{ secrets.ECS_CLUSTER }} \
             --service ${{ secrets.BILLING_SERVICE }} \
             --force-new-deployment
 
+      # ── Wait for ALL services to stabilize ──────────────────────────────────
+      # ECS waits until the desired count of healthy tasks equals the running
+      # count. If this times out, ECS itself rolls back via the circuit-breaker
+      # (must be enabled in the ECS service settings → "deployment circuit breaker").
+
+      - name: Wait for stability — gateway
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.GATEWAY_SERVICE }}
+
+      - name: Wait for stability — auth
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.AUTH_SERVICE }}
+
+      - name: Wait for stability — chat
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.CHAT_SERVICE }}
+
+      - name: Wait for stability — agent
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.AGENT_SERVICE }}
+
+      - name: Wait for stability — billing
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ secrets.ECS_CLUSTER }} \
+            --services ${{ secrets.BILLING_SERVICE }}
+
+      # ── Manual rollback step (runs only if a wait step failed) ──────────────
+      # Re-deploys the PREVIOUS_SHA image tag for every service.
+      # You set PREVIOUS_SHA as a GitHub Actions secret or workflow variable
+      # pointing to the last known-good commit SHA.
+      # After a successful deploy you update it manually (or via a script).
+
+      - name: ROLLBACK — restore previous version on failure
+        if: failure()
+        env:
+          PREV: ${{ secrets.PREVIOUS_GOOD_SHA }}
+          CLUSTER: ${{ secrets.ECS_CLUSTER }}
+        run: |
+          echo "⚠️  Deployment unstable — rolling back to $PREV"
+          ECR=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+          for SERVICE_PAIR in \
+            "gateway:${{ secrets.GATEWAY_SERVICE }}" \
+            "auth-service:${{ secrets.AUTH_SERVICE }}" \
+            "chat-service:${{ secrets.CHAT_SERVICE }}" \
+            "agent-service:${{ secrets.AGENT_SERVICE }}" \
+            "billing-service:${{ secrets.BILLING_SERVICE }}"; do
+
+            REPO=${SERVICE_PAIR%%:*}
+            SERVICE=${SERVICE_PAIR##*:}
+
+            # Get current task definition, swap the image tag to $PREV, re-register
+            TASK_DEF=$(aws ecs describe-services --cluster $CLUSTER --services $SERVICE \
+              --query 'services[0].taskDefinition' --output text)
+
+            NEW_TASK_DEF=$(aws ecs describe-task-definition --task-definition $TASK_DEF \
+              --query 'taskDefinition' | \
+              jq --arg img "$ECR/$REPO:$PREV" \
+                 '.containerDefinitions[0].image = $img |
+                  del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.placementConstraints,.compatibilities,.registeredAt,.registeredBy)')
+
+            NEW_ARN=$(echo "$NEW_TASK_DEF" | \
+              aws ecs register-task-definition --cli-input-json /dev/stdin \
+              --query 'taskDefinition.taskDefinitionArn' --output text)
+
+            aws ecs update-service \
+              --cluster $CLUSTER \
+              --service $SERVICE \
+              --task-definition $NEW_ARN
+          done
+
+          echo "✅ Rollback tasks submitted. Verify in ECS console."
+
+# ══════════════════════════════════════════════════════════════════════════════
+# JOB 4 — deploy frontend (only after backend is stable)
+# ══════════════════════════════════════════════════════════════════════════════
   deploy-frontend:
+    name: Deploy frontend (S3 + CloudFront)
     needs: deploy-backend
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
 
       - name: Build frontend
         working-directory: frontend
         env:
-          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
-          VITE_SERVER_URL: ${{ secrets.VITE_SERVER_URL }}
-          VITE_RAZORPAY_KEY_ID: ${{ secrets.VITE_RAZORPAY_KEY_ID }}
+          VITE_FIREBASE_API_KEY:  ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_SERVER_URL:        ${{ secrets.VITE_SERVER_URL }}
+          VITE_RAZORPAY_KEY_ID:   ${{ secrets.VITE_RAZORPAY_KEY_ID }}
         run: |
-          test -n "$VITE_FIREBASE_API_KEY" || { echo "VITE_FIREBASE_API_KEY is not configured"; exit 1; }
-          test -n "$VITE_SERVER_URL" || { echo "VITE_SERVER_URL is not configured"; exit 1; }
-          test -n "$VITE_RAZORPAY_KEY_ID" || { echo "VITE_RAZORPAY_KEY_ID is not configured"; exit 1; }
+          test -n "$VITE_FIREBASE_API_KEY"  || { echo "VITE_FIREBASE_API_KEY is not configured";  exit 1; }
+          test -n "$VITE_SERVER_URL"         || { echo "VITE_SERVER_URL is not configured";         exit 1; }
+          test -n "$VITE_RAZORPAY_KEY_ID"   || { echo "VITE_RAZORPAY_KEY_ID is not configured";   exit 1; }
           npm ci
           npm run build
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}  
-      
-      - name: upload to s3
-        run: |
-         aws s3 sync \
-         frontend/dist \
-         s3://${{secrets.S3_AWS_BUCKET_NAME}} \
-         --delete
+          aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: invalidate cloudfront
+      - name: Upload to S3
+        run: |
+          aws s3 sync \
+            frontend/dist \
+            s3://${{ secrets.S3_AWS_BUCKET_NAME }} \
+            --delete
+
+      - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
             --distribution-id "${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/*"
-
-
-
-    

@@ -30,11 +30,6 @@ export const searchAgent = async (state) => {
     }
   } catch (error) {
     console.error("[searchAgent] Search request failed:", error)
-      return {
-        ...state,
-         searchResults:[],
-         images:[],
-        aiResponse: error?.data?.message || "failed to generate image"
-    }
+    throw error
   }
 }

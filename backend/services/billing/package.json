@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "dev": "nodemon index.js",
-    "start":"node index.js"
+    "start": "node index.js",
+    "test": "node --experimental-vm-modules --test test/billing.test.js"
+  },
+  "nodemonConfig": {
+    "ignore": ["test/*"]
   },
   "keywords": [],
   "author": "",

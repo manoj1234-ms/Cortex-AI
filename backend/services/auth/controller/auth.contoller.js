@@ -138,28 +138,33 @@ export const getUserProfile = async (req, res) => {
 };
 
 
-export const updateUserPayment = async (req,res) => {
+export const updateUserPayment = async (req, res) => {
   try {
     const { plan, credits, userId } = req.body
 
     const user = await User.findById(userId)
 
-    if(!user){
-      return res.status(404).json({message: 'user not found'})
+    if (!user) {
+      return res.status(404).json({ message: 'user not found' })
     }
+
+    const valid_plans = ["free", "pro", "starter"]
+    const max_allowd_credit = 10_000;
 
     if (
       typeof plan !== "string" ||
+      !valid_plans.includes(plan) ||
       !Number.isFinite(credits) ||
-      credits <= 0
+      credits <= 0 ||
+      credits > max_allowd_credit
     ) {
       return res.status(400).json({ message: "A valid plan and credit amount are required." });
     }
 
-    user.plan= plan
+    user.plan = plan
     user.credits = (user.credits ?? 100) + credits
     user.totalCredits = (user.totalCredits ?? 100) + credits
-    user.planExpiresAt = new Date(Date.now() + 30 * 24 *60 *60*1000)
+    user.planExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     await user.save()
 
     const sessionId = req.cookies?.session;
@@ -178,20 +183,20 @@ export const updateUserPayment = async (req,res) => {
 
     if (sessionId) {
       await redis.set(
-      `session:${sessionId}`,
-      JSON.stringify(sessionUser),
-      "EX",
-      3 * 24 * 60 * 60
-    );
+        `session:${sessionId}`,
+        JSON.stringify(sessionUser),
+        "EX",
+        3 * 24 * 60 * 60
+      );
     }
 
     return res.status(200).json({
-      success:true
+      success: true
     })
 
   } catch (error) {
     return res.status(500).json({
-      message:` Update user payment ${error}`,
+      message: ` Update user payment ${error}`,
     });
   }
 }
@@ -199,35 +204,35 @@ export const updateUserPayment = async (req,res) => {
 
 export const deductCredits = async (req, res) => {
   try {
-    const {userId, agent} = req.body
+    const { userId, agent } = req.body
     const COST = {
-      chat : 1,
-      search : 5,
-      coding : 10,
-      debug:10,
-      pdf : 10,
-      ppt : 10,
-      vision : 10
+      chat: 1,
+      search: 5,
+      coding: 10,
+      debug: 10,
+      pdf: 10,
+      ppt: 10,
+      vision: 10
     };
-
-    const user = await User.findById(userId)
-
-    if(!user) {
-      return res.status(400).json({
-        message: "user not found"
-      })
-    }
 
     const requireCredit = COST[agent] || 1
 
-    if(user.credits < requireCredit ) {
-       return res.status(400).json({
-        message: "Not enougth Credits."
-      })
-    }
+    // Atomic deduction: only succeeds if the user exists AND has enough credits.
+    // Prevents race conditions where two concurrent requests both pass the
+    // balance check and both deduct from the same starting balance.
+    const user = await User.findOneAndUpdate(
+      { _id: userId, credits: { $gte: requireCredit } },
+      { $inc: { credits: -requireCredit } },
+      { new: true }
+    )
 
-    user.credits -= requireCredit
-    await user.save()
+    if (!user) {
+      const exists = await User.exists({ _id: userId })
+      if (!exists) {
+        return res.status(404).json({ message: "User not found." })
+      }
+      return res.status(402).json({ message: "Insufficient credits." })
+    }
 
     const sessionId = req.cookies?.session;
 
@@ -239,20 +244,20 @@ export const deductCredits = async (req, res) => {
       plan: user.plan,
       credits: user.credits,
       totalCredits: user.totalCredits,
-      planExpiresAt: user.planExpiresAt ?? user.PlanExpiresAt
+      planExpiresAt: user.planExpiresAt,
     };
 
 
     if (sessionId) {
       await redis.set(
-      `session:${sessionId}`,
-      JSON.stringify(sessionUser),
-      "EX",
-      3 * 24 * 60 * 60
-    );
+        `session:${sessionId}`,
+        JSON.stringify(sessionUser),
+        "EX",
+        3 * 24 * 60 * 60
+      );
     }
 
-    return res.status(200).json({success:true, credits:user.credits})
+    return res.status(200).json({ success: true, credits: user.credits })
 
   } catch (error) {
     return res.status(500).json({

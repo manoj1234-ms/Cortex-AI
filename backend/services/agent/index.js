@@ -19,15 +19,20 @@ app.use(express.json())
 
 app.use("/",router)
 
-app.use((err,req,res,next) => {
-    console.log(err)
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+    console.error("[agent] Unhandled error:", err)
 
-    if(err.status){
-        return res.status(err.status).json(err.data)
+    const status = Number.isInteger(err.status) ? err.status : 500
+
+    // Rate-limit errors carry a structured err.data payload — forward it as-is.
+    if (err.data) {
+        return res.status(status).json(err.data)
     }
 
-    return res.status(500).json({
-        message: `agent error ${err}`
+    return res.status(status).json({
+        success: false,
+        message: err.message || "An unexpected agent error occurred.",
     })
 })
 

@@ -69,11 +69,10 @@ export const imageAnalyzer = async(state) => {
     };
   } catch (error) {
     console.error("[imageAnalyzer] Image analysis failed:", error);
-     return {
-        ...state,
-        aiResponse: error?.data?.message || "failed to analyze the image"
-    }
+    throw error
   } finally {
-    await rm(state.file.path, { force: true });
+    if (state.file?.path) {
+      await rm(state.file.path, { force: true }).catch(() => {});
+    }
   }
 }

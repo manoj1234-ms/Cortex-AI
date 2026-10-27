@@ -5,7 +5,7 @@ import razorpay from '../config/razorpay.js';
 import Payment from '../models/payment.model.js';
 
 
-export const createOrder = async (req,res) => {
+export const createOrder = async (req, res) => {
     try {
         const { plan } = req.body ?? {}
         const userId = req.get("x-user-id")
@@ -28,15 +28,15 @@ export const createOrder = async (req,res) => {
 
         await Payment.create({
             userId,
-            orderId:order.id,
-            amount:selectedPlan.amount,
-            credits:selectedPlan.credits,
+            orderId: order.id,
+            amount: selectedPlan.amount,
+            credits: selectedPlan.credits,
             plan: selectedPlan.id,
             currency: order.currency,
             status: "created"
         })
 
-        return res.status(200).json({order, plan: selectedPlan})
+        return res.status(200).json({ order, plan: selectedPlan })
     } catch (error) {
         console.error("Create billing order error:", error)
         return res.status(500).json({
@@ -45,7 +45,7 @@ export const createOrder = async (req,res) => {
     }
 }
 
-export const verifyPayment = async(req,res) => {
+export const verifyPayment = async (req, res) => {
     try {
         const {
             razorpay_order_id: orderId,
@@ -76,14 +76,30 @@ export const verifyPayment = async(req,res) => {
         ) {
             return res.status(400).json({ message: "Payment verification failed." })
         }
-        
+
         const payment = await Payment.findOne({ orderId })
 
-        if(!payment){
+        if (!payment) {
             return res.status(404).json({ message: "Payment order not found." })
         }
         if (payment.userId !== userId) {
             return res.status(403).json({ message: "This payment order does not belong to the current user." })
+        }
+
+        if (payment.status === "paid") {
+            return res.status(200).json({ message: "Payment already verified." })
+        }
+
+        // Use findOneAndUpdate with a conditional write so concurrent requests
+        // cannot both see status==="created" and both proceed.
+        const updated = await Payment.findOneAndUpdate(
+            { orderId, status: "created" },   // only update if still "created"
+            { status: "paid", paymentId },
+            { new: true }
+        )
+
+        if (!updated) {
+            return res.status(400).json({ message: "Payment already processed." })
         }
 
         payment.status = "paid"
@@ -101,6 +117,7 @@ export const verifyPayment = async(req,res) => {
             credits: payment.credits,
         }, {
             timeout: 10_000,
+            headers: { "x-internal-secret": process.env.INTERNAL_SECRET_KEY },
         })
 
         return res.status(200).json({ message: "Payment verified successfully." })

@@ -28,7 +28,8 @@ export const pdfRag = async(state) => {
             chunkOverlap: 150
         });
         const docs = await splitter.createDocuments([text]);
-        const collectionName = `pdf-${Date.now()}`;
+        // Scope by user + conversation to isolate documents between users
+        const collectionName = `pdf-${state.userId}-${state.conversationId}`;
         const store = await vectorStore(docs, collectionName);
         const relevantDocs = await store.similaritySearch(state.prompt, 5);
         const context = relevantDocs.map(doc => doc.pageContent).join("\n\n");
@@ -60,14 +61,13 @@ Use Markdown when helpful.`),
         };
     } catch (error) {
         console.error("[pdfRag] PDF analysis failed:", error);
-         return {
-        ...state,
-        aiResponse: error?.data?.message || "failed to analyze the uploaded pdf"
-    }
+        throw error
     } finally {
         if (parser) {
             await parser.destroy();
         }
-        await rm(state.file.path, { force: true });
+        if (state.file?.path) {
+            await rm(state.file.path, { force: true }).catch(() => {});
+        }
     }
 }
