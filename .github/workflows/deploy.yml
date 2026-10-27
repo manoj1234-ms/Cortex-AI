@@ -27,6 +27,10 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install backend root dependencies
+        working-directory: backend
+        run: npm ci
+
       - name: Test — auth service
         working-directory: backend/services/auth
         run: |
