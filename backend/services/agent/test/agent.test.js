@@ -7,6 +7,8 @@ import { writeFile, rm, mkdir } from "node:fs/promises"
 import path from "node:path"
 import os from "node:os"
 
+process.env.NODE_ENV = "test"
+process.env.PORT = process.env.PORT || "8003"
 process.env.INTERNAL_SECRET_KEY = "test-secret"
 if (!process.env.REDIS_URL) {
     process.env.REDIS_URL = "redis://127.0.0.1:6379"

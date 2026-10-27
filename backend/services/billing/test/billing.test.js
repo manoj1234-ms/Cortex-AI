@@ -11,6 +11,12 @@ import assert from "node:assert/strict"
 import { test, mock } from "node:test"
 import crypto from "node:crypto"
 
+process.env.NODE_ENV = "test"
+process.env.RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "rzp_test_mockKeyId"
+process.env.RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "mockKeySecret"
+process.env.INTERNAL_SECRET_KEY = process.env.INTERNAL_SECRET_KEY || "test-internal-secret"
+process.env.AUTH_SERVICE = process.env.AUTH_SERVICE || "http://localhost:8001"
+
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 function makeCtx(body = {}, headers = {}) {
