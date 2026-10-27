@@ -20,6 +20,9 @@ const loadServiceAccount = () => {
     );
   } catch (error) {
     if (error.code === "ENOENT") {
+      if (process.env.NODE_ENV === "test") {
+        return null;
+      }
       throw new Error(
         "Firebase Admin credentials are missing. Set FIREBASE_SERVICE_ACCOUNT_KEY or provide serviceAccountKey.json for local development.",
         { cause: error }
@@ -33,13 +36,14 @@ const loadServiceAccount = () => {
 const serviceAccount = loadServiceAccount();
 
 if (
-  !serviceAccount ||
-  typeof serviceAccount !== "object" ||
-  Array.isArray(serviceAccount)
+  serviceAccount &&
+  (typeof serviceAccount !== "object" || Array.isArray(serviceAccount))
 ) {
   throw new Error("Firebase Admin credentials must be a JSON object.");
 }
 
-export const app =  initializeApp({
-  credential: cert(serviceAccount)
-});
+export const app = serviceAccount
+  ? initializeApp({
+      credential: cert(serviceAccount),
+    })
+  : { name: "[MOCK_TEST_APP]" };

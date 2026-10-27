@@ -11,6 +11,7 @@ import assert from "node:assert/strict"
 import { test, mock, after } from "node:test"
 
 // Mock Redis module or env so tests do not require a live Redis instance
+process.env.NODE_ENV = "test"
 process.env.INTERNAL_SECRET_KEY = "test-secret"
 if (!process.env.REDIS_URL) {
     process.env.REDIS_URL = "redis://127.0.0.1:6379"
